@@ -376,7 +376,7 @@ void SuperLIO::Propagation_Undistort(){
   auto& raw_pc = measures_.lidar.pc;
 
   std::size_t ptsize = raw_pc->points.size();
-  scan_undistort_full_->resize(ptsize); 
+  scan_undistort_full_->resize(ptsize);
 
   tbb::parallel_for(
   tbb::blocked_range<size_t>(0, ptsize),
@@ -439,6 +439,7 @@ struct ThreadACC{
 
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
+  if (ptsize == 0) return;
   
   static std::vector<float> _lengths;
   points_body_v3_.resize(ptsize);
@@ -572,12 +573,17 @@ void SuperLIO::Output(){
       return;
     }
     count = 0;
+
     if(g_visual_dense){
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      if(!scan_undistort_full_->empty() && transformation.allFinite()){
+        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }else{
-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      if(!ds_undistort_->empty() && transformation.allFinite()){
+        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }
   }
 }

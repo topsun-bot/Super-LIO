@@ -179,6 +179,16 @@ bool SuperLIOReLoc::kf_init(){
 
   LOG(INFO) << YELLOW << " ---> INIT start... obs_data size: " << init_obs_data_->size() << " target size: " << point_map_->size() << RESET;
 
+  if(init_obs_data_->empty()){
+    imu_cout = 0;
+    init_frame_count = 0;
+    init_obs_data_->clear();
+    mean_gyro = V3::Zero();
+    mean_acce = V3::Zero();
+    LOG(INFO) << RED << " ---> INIT failed: no valid lidar points." << RESET;
+    return false;
+  }
+
   V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
   V3 ref_gravity(0, 0, - g_gravity_norm);
   M3 init_rot = Quat::FromTwoVectors(gravity, ref_gravity).toRotationMatrix();
@@ -315,11 +325,15 @@ void SuperLIOReLoc::Output() {
     }
     count = 0;
     if(g_visual_dense){
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      if(!scan_undistort_full_->empty() && transformation.allFinite()){
+        pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }else{
-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      if(!ds_undistort_->empty() && transformation.allFinite()){
+        pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+        data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+      }
     }
   }
 

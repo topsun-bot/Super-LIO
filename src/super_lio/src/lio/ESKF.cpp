@@ -11,12 +11,15 @@ namespace LI2Sup{
 /// [1] = [2] <===> [3]
 static inline M3d RightJacobianSO3(const V3& ang_vel, const scalar& dt){
   V3d ang_vel_d = ang_vel.template cast<double>();
-  scalar ang_vel_norm = ang_vel_d.norm();
-  if (ang_vel_norm < 1e-8){   /// noise? too small
+  double ang_vel_norm_d = ang_vel_d.norm();
+  if (ang_vel_norm_d < 1e-8){   /// noise? too small
     return M3d::Identity();
   }else{
-    V3d r_axis = ang_vel_d / ang_vel_norm;
-    double r_ang = ang_vel_norm * dt;
+    V3d r_axis = ang_vel_d / ang_vel_norm_d;
+    double r_ang = ang_vel_norm_d * dt;
+    if (r_ang < 1e-10){
+      return M3d::Identity();
+    }
     M3d K;
     K << 0.0, -r_axis[2], r_axis[1], r_axis[2], 0.0, -r_axis[0], -r_axis[1], r_axis[0], 0.0;
     double a = (1 - std::cos(r_ang)) / r_ang;

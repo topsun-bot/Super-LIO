@@ -456,6 +456,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   {
     pcl::PointCloud<hesai_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
+    if (pl_orig.empty()) return;
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
     const double time_begin = pl_orig.points[0].timestamp;
     lidar_data.start_time = time_begin;
