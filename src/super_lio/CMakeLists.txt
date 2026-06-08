@@ -14,6 +14,7 @@ add_definitions(-DROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(rosidl_cmake REQUIRED)
 
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -26,6 +27,7 @@ find_package(livox_ros_driver2 REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
+find_package(TBB REQUIRED)
 find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 
@@ -34,12 +36,6 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/CloudPose.msg
   msg/CloudPose2.msg
   DEPENDENCIES std_msgs sensor_msgs geometry_msgs
-)
-
-rosidl_get_typesupport_target(
-  cpp_typesupport_target
-  ${PROJECT_NAME}
-  "rosidl_typesupport_cpp"
 )
 
 include_directories(
@@ -68,25 +64,30 @@ ament_target_dependencies(lio PUBLIC
   rosidl_default_runtime
 )
 
+# Foxy 无 rosidl_get_typesupport_target；手动链接 typesupport，保持 keyword 签名一致
+set(_typesupport_target "${PROJECT_NAME}__rosidl_typesupport_cpp")
+add_dependencies(lio ${PROJECT_NAME})
+get_target_property(_ts_include_dirs ${_typesupport_target} INTERFACE_INCLUDE_DIRECTORIES)
+if(_ts_include_dirs)
+  target_include_directories(lio PUBLIC ${_ts_include_dirs})
+endif()
+
 target_link_libraries(lio PUBLIC
+  ${_typesupport_target}
   Eigen3::Eigen
   ${PCL_LIBRARIES}
+  TBB::tbb
   glog
   pthread
-  ${cpp_typesupport_target}
 )
 
 add_executable(super_lio_node src/apps/super_lio_node.cpp)
-target_link_libraries(super_lio_node
-  lio
-  ${cpp_typesupport_target}
-)
+target_link_libraries(super_lio_node lio)
+rosidl_target_interfaces(super_lio_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 add_executable(relocation_node src/apps/relocation_node.cpp)
-target_link_libraries(relocation_node
-  lio
-  ${cpp_typesupport_target}
-)
+target_link_libraries(relocation_node lio)
+rosidl_target_interfaces(relocation_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 install(TARGETS
   lio
