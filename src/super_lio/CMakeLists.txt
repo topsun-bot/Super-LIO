@@ -11,6 +11,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -pthread -fexceptions -flto=auto")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wall -fPIC")
 add_definitions(-DROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
@@ -22,7 +23,8 @@ find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
-find_package(pcl_ros REQUIRED)
+find_package(pcl_conversions REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
@@ -43,7 +45,7 @@ include_directories(
   3rdparty
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
-  ${Glog_INCLUDE_DIRS}
+  ${GLOG_INCLUDE_DIRS}
 )
 
 file(GLOB_RECURSE LIO_LIB_SRC "src/lio/*.cpp" "src/ros/*.cpp")
@@ -58,7 +60,8 @@ ament_target_dependencies(lio PUBLIC
   sensor_msgs
   visualization_msgs
   nav_msgs
-  pcl_ros
+  pcl_conversions
+  tf2_ros
   livox_ros_driver2
   basic
   rosidl_default_runtime

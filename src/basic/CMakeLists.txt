@@ -10,6 +10,8 @@ set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -pthread -fexceptions -flto=auto")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wall -fPIC")
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake")
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(Glog REQUIRED)
@@ -36,7 +38,7 @@ target_include_directories(${PROJECT_NAME}
   $<INSTALL_INTERFACE:include>
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
-  ${Glog_INCLUDE_DIRS}
+  ${GLOG_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME}
