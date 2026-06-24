@@ -12,7 +12,11 @@ set(CMAKE_C_FLAGS_RELEASE "-O3 -Wall -fPIC")
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(Glog REQUIRED)
+# Ubuntu focal's libgoogle-glog-dev (0.4.0) ships only a pkg-config file, no
+# GlogConfig.cmake, so find_package(Glog) fails in config mode. Resolve glog
+# via pkg-config instead (sets Glog_INCLUDE_DIRS).
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(Glog REQUIRED IMPORTED_TARGET libglog)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
 

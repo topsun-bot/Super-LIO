@@ -23,8 +23,10 @@ namespace LI2Sup{
   
   string g_imu_topic;
   string g_lidar_topic;
+  string g_global_frame_id;
 
   int    g_lidar_type;
+  int    g_msg_type;
   float  g_blind2;
   float  g_maxrange2;
   int    g_filter_rate;

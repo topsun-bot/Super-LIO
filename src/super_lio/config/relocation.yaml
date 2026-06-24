@@ -10,7 +10,10 @@
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
 
-    lio.sensor.lidar_type: 1
+    lio.global.frame_id: "map"
+
+	    lio.sensor.lidar_type: 1
+	    lio.sensor.msg_type: 0
     lio.sensor.blind: 0.3
     lio.sensor.maxrange: 100.0
     lio.sensor.filter_rate: 3.0

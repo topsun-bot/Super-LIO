@@ -136,7 +136,30 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(LivoxSIM::Point,
                                   )
 
 // x, y, z, intensity, tag, line, timestamp
- 
+// Livox Mid360 standard PointCloud2 (livox_ros_driver2, xfer_format = 0).
+// Field layout (point_step = 26):
+//   float32 x, y, z, intensity;  uint8 tag, line;  float64 timestamp
+// `timestamp` = per-point offset_time in NANOSECONDS relative to the frame
+// start (NOT epoch). The scan's absolute time lives in the PointCloud2 header
+// stamp. We only need x,y,z,intensity + timestamp for parsing.
+namespace livox_ros {
+struct EIGEN_ALIGN16 Point {
+    PCL_ADD_POINT4D
+    float intensity;
+    double timestamp;   // offset_time [ns] relative to frame start
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}
+
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_ros::Point,
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (float, intensity, intensity)
+                                  (double, timestamp, timestamp)
+                                  )
+
 namespace BASIC {
 
 // using scalar = double;
