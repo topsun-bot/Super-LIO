@@ -40,6 +40,9 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<std::string>("lio.ros.imu_topic", "/imu");
   node.get_parameter("lio.ros.imu_topic", g_imu_topic);
 
+  node.declare_parameter<std::string>("lio.global.imu_frame", "imu");
+  node.get_parameter("lio.global.imu_frame", g_imu_frame);
+
   node.declare_parameter<std::string>("lio.global.frame_id", "map");
   node.get_parameter("lio.global.frame_id", g_global_frame_id);
 
@@ -657,7 +660,7 @@ void ROSWrapper::pub_odom(const NavState& state){
 
   tf_msg.header.stamp = odom.header.stamp;
   tf_msg.header.frame_id = g_global_frame_id;
-  tf_msg.child_frame_id = "imu";
+  tf_msg.child_frame_id = g_imu_frame;
 
   tf_msg.transform.translation.x = state.p[0];
   tf_msg.transform.translation.y = state.p[1];

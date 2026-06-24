@@ -24,6 +24,7 @@ namespace LI2Sup{
   string g_imu_topic;
   string g_lidar_topic;
   string g_global_frame_id;
+  string g_imu_frame;
 
   int    g_lidar_type;
   int    g_msg_type;
