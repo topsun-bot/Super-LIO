@@ -15,6 +15,7 @@ add_definitions(-DROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(rosidl_cmake REQUIRED)
+find_package(rosidl_default_runtime REQUIRED)
 
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
@@ -28,11 +29,8 @@ find_package(livox_ros_driver2 REQUIRED)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
 find_package(TBB REQUIRED)
-# Ubuntu focal's libgoogle-glog-dev (0.4.0) ships only a pkg-config file, no
-# GlogConfig.cmake, so find_package(Glog) fails in config mode. Resolve glog
-# via pkg-config instead (sets Glog_INCLUDE_DIRS).
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(Glog REQUIRED IMPORTED_TARGET libglog)
+# Ubuntu jammy's libgoogle-glog-dev ships GlogConfig.cmake, so find_package works.
+find_package(Glog REQUIRED)
 find_package(basic REQUIRED)
 
 
@@ -65,19 +63,14 @@ ament_target_dependencies(lio PUBLIC
   pcl_ros
   livox_ros_driver2
   basic
-  rosidl_default_runtime
 )
 
-# Foxy 无 rosidl_get_typesupport_target；手动链接 typesupport，保持 keyword 签名一致
-set(_typesupport_target "${PROJECT_NAME}__rosidl_typesupport_cpp")
+# Humble: use rosidl_get_typesupport_target to get the generated typesupport target
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 add_dependencies(lio ${PROJECT_NAME})
-get_target_property(_ts_include_dirs ${_typesupport_target} INTERFACE_INCLUDE_DIRECTORIES)
-if(_ts_include_dirs)
-  target_include_directories(lio PUBLIC ${_ts_include_dirs})
-endif()
 
 target_link_libraries(lio PUBLIC
-  ${_typesupport_target}
+  "${cpp_typesupport_target}"
   Eigen3::Eigen
   ${PCL_LIBRARIES}
   TBB::tbb
@@ -87,11 +80,9 @@ target_link_libraries(lio PUBLIC
 
 add_executable(super_lio_node src/apps/super_lio_node.cpp)
 target_link_libraries(super_lio_node lio)
-rosidl_target_interfaces(super_lio_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 add_executable(relocation_node src/apps/relocation_node.cpp)
 target_link_libraries(relocation_node lio)
-rosidl_target_interfaces(relocation_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
 install(TARGETS
   lio
@@ -125,6 +116,10 @@ install(DIRECTORY config/
 
 install(DIRECTORY rviz/
   DESTINATION share/${PROJECT_NAME}/rviz
+)
+
+install(DIRECTORY map/
+  DESTINATION share/${PROJECT_NAME}/map
 )
 
 ament_package()
