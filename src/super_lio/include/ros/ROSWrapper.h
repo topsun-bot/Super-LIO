@@ -78,7 +78,8 @@ public:
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
-  void set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_guess, bool flg_finish_init = false);
+  void set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_guess,
+                        bool& flg_has_init_guess, bool flg_finish_init = false);
 
   rclcpp::CallbackGroup::SharedPtr getSensorCallbackGroup() {
     return cb_sensor_;

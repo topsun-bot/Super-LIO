@@ -76,5 +76,7 @@ namespace LI2Sup{
   /// for relocation
   bool g_update_map = false;
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
+  bool g_use_external_init_pose = false;
+  std::string g_init_pose_topic = "/initialpose";
 
 }

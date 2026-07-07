@@ -100,6 +100,10 @@ namespace LI2Sup{
   /// for relocation
   extern bool g_update_map;
   extern double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
+  /// When true, relocation subscribes to g_init_pose_topic for the init estimate
+  /// (e.g. global_reloc /initial_pose) instead of using lio.relocation.init_pose.
+  extern bool g_use_external_init_pose;
+  extern std::string g_init_pose_topic;
 
 }
 

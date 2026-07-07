@@ -34,6 +34,7 @@ private:
 private:
   BASIC::CloudPtr init_obs_data_;
   bool flg_get_init_guess_ = false;
+  bool flg_has_init_guess_ = false;  // true once an external init pose has been received
   BASIC::SE3 re_init_pose_;
 };
 

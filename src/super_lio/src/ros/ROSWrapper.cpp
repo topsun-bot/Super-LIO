@@ -199,6 +199,15 @@ void LoadParamFromRos(rclcpp::Node& node)
   g_init_pitch = init_pose[4];
   g_init_yaw   = init_pose[5];
 
+  // External init-pose source (e.g. global_reloc). When true, relocation
+  // subscribes to lio.relocation.init_pose_topic for the init estimate instead
+  // of using lio.relocation.init_pose from config.
+  node.declare_parameter<bool>("lio.relocation.use_external_init_pose", false);
+  node.get_parameter("lio.relocation.use_external_init_pose", g_use_external_init_pose);
+
+  node.declare_parameter<std::string>("lio.relocation.init_pose_topic", "/initialpose");
+  node.get_parameter("lio.relocation.init_pose_topic", g_init_pose_topic);
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }
@@ -793,18 +802,29 @@ void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
 }
 
 
-void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_guess, bool flg_finish_init)
+void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_guess,
+                                  bool& flg_has_init_guess, bool flg_finish_init)
 {
+  // Init-pose subscriber on lio.relocation.init_pose_topic (default /initialpose,
+  // the RViz "2D Pose Estimate" convention). A received pose overrides init_pose
+  // by reference and flags kf_init to re-accumulate with the new estimate. This
+  // subscriber is always created (as in the original), so the config init_pose
+  // remains the default and an external pose only overrides when one arrives.
+  //
+  // External mode (lio.relocation.use_external_init_pose=true) additionally makes
+  // kf_init WAIT for the first received pose before aligning (see
+  // SuperLIOReLoc::kf_init), so a slow publisher like global_reloc actually drives
+  // the init instead of being beaten by the config pose.
   static auto init_pose_sub =
     this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-        "/initialpose", 1,
-        [this, &init_pose, &flg_get_init_guess](
-          const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) 
+        g_init_pose_topic, 1,
+        [this, &init_pose, &flg_get_init_guess, &flg_has_init_guess](
+          const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
         {
           V3 init_translation;
           init_translation << msg->pose.pose.position.x,
                               msg->pose.pose.position.y,
-                              0.2;
+                              msg->pose.pose.position.z;  // respect z (was hardcoded 0.2)
 
           double x = msg->pose.pose.orientation.x;
           double y = msg->pose.pose.orientation.y;
@@ -816,10 +836,11 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
           init_pose = BASIC::SE3(SO3(init_rotation.toRotationMatrix()), init_translation);
 
           flg_get_init_guess = true;
+          flg_has_init_guess = true;  // at least one external pose received
 
           LOG(INFO) << YELLOW
-                  << " ---> GET Initial guess: "
-                  << init_translation.transpose()
+                  << " ---> GET Initial guess from " << g_init_pose_topic
+                  << ": " << init_translation.transpose()
                   << " yaw: "
                   << init_rotation.toRotationMatrix()
                           .eulerAngles(0, 1, 2)

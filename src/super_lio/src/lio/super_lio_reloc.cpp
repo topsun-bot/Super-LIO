@@ -124,7 +124,7 @@ bool SuperLIOReLoc::map_init(){
   pcd_loaded = true;
 
   data_wrapper_->set_global_map(point_map_);
-  data_wrapper_->set_initial_data(re_init_pose_, flg_get_init_guess_);
+  data_wrapper_->set_initial_data(re_init_pose_, flg_get_init_guess_, flg_has_init_guess_);
   return true;
 }
 
@@ -135,6 +135,18 @@ bool SuperLIOReLoc::kf_init(){
   static int init_frame_count = 0;
   static V3 mean_gyro = V3::Zero();
   static V3 mean_acce = V3::Zero();
+
+  /// External init-pose mode: wait for global_reloc's init pose before
+  /// accumulating/aligning. Without this, super_lio would init from the config
+  /// pose (zeros) before global_reloc publishes, defeating the integration.
+  if (g_use_external_init_pose && !flg_has_init_guess_) {
+    static int wait_log_cnt = 0;
+    if (++wait_log_cnt % 100 == 1) {
+      LOG(INFO) << YELLOW << " ---> [SuperLIOReLoc] waiting for external init pose on "
+                << g_init_pose_topic << RESET;
+    }
+    return false;
+  }
 
   /// get init guess from ROS topic.
   if(flg_get_init_guess_){
@@ -256,12 +268,16 @@ bool SuperLIOReLoc::kf_init(){
   kf_->SetX(state);
   sys_init_pose_ = kf_->GetSE3();
 
+  LOG(INFO) << GREEN << " ---> [INIT DONE] external_init=" << g_use_external_init_pose
+            << " icp_fitness=" << icp.getFitnessScore()
+            << " init_p=(" << state.p.transpose() << ")" << RESET;
+
   {
     point_map_->clear();
     point_map_.reset(new PointCloudType());
     init_obs_data_->clear();
     init_obs_data_ = nullptr;
-    data_wrapper_->set_initial_data(re_init_pose_, flg_get_init_guess_, true);
+    data_wrapper_->set_initial_data(re_init_pose_, flg_get_init_guess_, flg_has_init_guess_, true);
   }
 
   return true;
