@@ -150,11 +150,17 @@ bool SuperLIOReLoc::kf_init(){
 
   /// get init guess from ROS topic.
   if(flg_get_init_guess_){
-    imu_cout = 0;
-    init_frame_count = 0;
-    init_obs_data_->clear();
-    mean_gyro = V3::Zero();
-    mean_acce = V3::Zero();
+    // Reset accumulators on the FIRST external pose only — fast publishers
+    // (e.g. global_reloc at ~1 Hz) would otherwise interrupt every accumulation
+    // window and prevent init from ever finishing.
+    if (!flg_first_reset_done_) {
+      imu_cout = 0;
+      init_frame_count = 0;
+      init_obs_data_->clear();
+      mean_gyro = V3::Zero();
+      mean_acce = V3::Zero();
+      flg_first_reset_done_ = true;
+    }
     flg_get_init_guess_ = false;
     return false;
   }

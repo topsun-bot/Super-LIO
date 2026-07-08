@@ -23,7 +23,11 @@ void LoadParamFromRos(rclcpp::Node& node)
 
   node.declare_parameter<std::string>("lio.map.save_map_dir", "");
   node.get_parameter("lio.map.save_map_dir", g_save_map_dir);
-  g_save_map_dir = g_root_dir + g_save_map_dir;
+  // If an absolute path is given (e.g. from bringup launch), use it as-is;
+  // otherwise prepend the super_lio source root (original behavior).
+  if (!g_save_map_dir.empty() && g_save_map_dir[0] != '/') {
+    g_save_map_dir = g_root_dir + g_save_map_dir;
+  }
 
   node.declare_parameter<std::string>("lio.map.map_name", "default");
   node.get_parameter("lio.map.map_name", g_map_name);
@@ -821,6 +825,11 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
         [this, &init_pose, &flg_get_init_guess, &flg_has_init_guess](
           const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
         {
+          // Debounce: if kf_init hasn't consumed the previous pose yet, keep
+          // the current one — otherwise fast publishers (global_reloc at ~1 Hz)
+          // keep resetting the accumulators and kf_init never finishes.
+          if (flg_get_init_guess) return;
+
           V3 init_translation;
           init_translation << msg->pose.pose.position.x,
                               msg->pose.pose.position.y,
