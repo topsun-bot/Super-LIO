@@ -339,6 +339,10 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "/lio/cloud_world", 10);
 
+  pub_cloud_body_ =
+    this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        "/lio/cloud_body", 10);
+
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
 }
@@ -647,6 +651,17 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   cloud.header.frame_id = "world";
   cloud.header.stamp = toRosTime(time);
   pub_cloud_world_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
+  sensor_msgs::msg::PointCloud2 cloud;
+  pcl::toROSMsg(*pc, cloud);
+  // ds_undistort_ is expressed in the IMU/body frame at the scan end time.
+  // Consumers can use the existing world->imu and odom->base_link TF chain.
+  cloud.header.frame_id = "imu";
+  cloud.header.stamp = toRosTime(time);
+  pub_cloud_body_->publish(cloud);
 }
 
 
