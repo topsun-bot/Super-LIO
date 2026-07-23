@@ -299,7 +299,13 @@ void SuperLIOReLoc::UpdateMap() {
 
 void SuperLIOReLoc::Output() {
   auto state = kf_->GetNavState();
-  data_wrapper_->pub_odom(state);  
+  data_wrapper_->pub_odom(state);
+
+  // Relocation: body-frame cloud for downstream consumers.
+  // Kept separate from g_visual_map so it is not affected by g_pub_step.
+  if (!ds_undistort_->empty()) {
+    data_wrapper_->pub_cloud_body(ds_undistort_, state.timestamp);
+  }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
