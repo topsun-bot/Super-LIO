@@ -567,6 +567,7 @@ void SuperLIO::Output(){
   // when map visualization is disabled or throttled with g_pub_step.
   if (!ds_undistort_->empty()) {
     data_wrapper_->pub_cloud_body_pose(ds_undistort_, state);
+    data_wrapper_->pub_cloud_body(ds_undistort_, state.timestamp);
   }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
