@@ -291,13 +291,13 @@ bool SuperLIOReLoc::kf_init(){
 
 
 void SuperLIOReLoc::UpdateMap() {
-  if(g_update_map){
-    static int __update_delay = 100;
-    if(__update_delay > 0){
-      __update_delay--;
-      std::cout << "Update map Delay: " << 100 - __update_delay << " %" << std::endl;
-      return;
-    }
+  if(!g_update_map) return;
+  
+  static int __update_delay = 100;
+  if(__update_delay > 0){
+    __update_delay--;
+    std::cout << "Update map Delay: " << 100 - __update_delay << " %" << std::endl;
+    return;
   }
 
   const size_t ptsize = ds_undistort_->size();
@@ -321,7 +321,13 @@ void SuperLIOReLoc::UpdateMap() {
 
 void SuperLIOReLoc::Output() {
   auto state = kf_->GetNavState();
-  data_wrapper_->pub_odom(state);  
+  data_wrapper_->pub_odom(state);
+
+  // Relocation: body-frame cloud for downstream consumers.
+  // Kept separate from g_visual_map so it is not affected by g_pub_step.
+  if (!ds_undistort_->empty()) {
+    data_wrapper_->pub_cloud_body(ds_undistort_, state.timestamp);
+  }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();

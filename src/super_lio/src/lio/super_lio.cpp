@@ -559,7 +559,16 @@ void SuperLIO::UpdateMap() {
 
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
-  data_wrapper_->pub_odom(state);  
+  data_wrapper_->pub_odom(state);
+
+  // Feed the independent loop-closure backend with a local, downsampled scan
+  // and the pose estimated for the same LiDAR frame.  This publisher is kept
+  // separate from the visualization output below so loop closure still works
+  // when map visualization is disabled or throttled with g_pub_step.
+  if (!ds_undistort_->empty()) {
+    data_wrapper_->pub_cloud_body_pose(ds_undistort_, state);
+    data_wrapper_->pub_cloud_body(ds_undistort_, state.timestamp);
+  }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
