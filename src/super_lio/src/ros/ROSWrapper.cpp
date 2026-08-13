@@ -446,6 +446,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
     odom_imu.header.stamp = msg->header.stamp;
     odom_robo.header.stamp = msg->header.stamp;
     odom_imu.header.frame_id = g_global_frame_id;
+    odom_imu.child_frame_id = g_imu_frame;
     odom_robo.header.frame_id = g_global_frame_id;
     pub_imu_odom_->publish(odom_imu);
     pub_robo_odom_->publish(odom_robo);
@@ -627,6 +628,7 @@ bool ROSWrapper::sync_measure(MeasureGroup& meas){
 void ROSWrapper::pub_odom(const NavState& state){
   nav_msgs::msg::Odometry odom;
   odom.header.frame_id = g_global_frame_id;
+  odom.child_frame_id = g_imu_frame;
 
   odom.header.stamp = toRosTime(state.timestamp);
   odom.pose.pose.position.x = state.p[0];
@@ -713,8 +715,8 @@ void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   // ds_undistort_ is expressed in the IMU/body frame at the scan end time.
-  // Consumers can use the existing world->imu and odom->base_link TF chain.
-  cloud.header.frame_id = "imu";
+  // Consumers can use the configured global->imu TF and imu->base_link extrinsic.
+  cloud.header.frame_id = g_imu_frame;
   cloud.header.stamp = toRosTime(time);
   pub_cloud_body_->publish(cloud);
 }
