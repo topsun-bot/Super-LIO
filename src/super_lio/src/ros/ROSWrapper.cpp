@@ -712,6 +712,9 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
 
 
 void ROSWrapper::pub_cloud_body(const CloudPtr& pc, double time){
+  if (pub_cloud_body_->get_subscription_count() == 0) {
+    return;
+  }
   sensor_msgs::msg::PointCloud2 cloud;
   pcl::toROSMsg(*pc, cloud);
   // ds_undistort_ is expressed in the IMU/body frame at the scan end time.
@@ -740,6 +743,9 @@ void ROSWrapper::pub_cloud_body_pose(const CloudPtr& pc,
   static auto pub_cloud_body_pose_ =
     this->create_publisher<super_lio::msg::CloudPose>(
         "/lio/body/cloud_pose", 10);
+  if (pub_cloud_body_pose_->get_subscription_count() == 0) {
+    return;
+  }
   super_lio::msg::CloudPose cloud_pose;
   pcl::toROSMsg(*pc, cloud_pose.cloud);
   cloud_pose.cloud.header.stamp = toRosTime(state.timestamp); 
