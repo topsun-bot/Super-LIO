@@ -17,9 +17,6 @@ void LoadParamFromRos(rclcpp::Node& node)
   LOG(INFO) << GREEN << " ---> [Param] map/save_map: "
             << (g_save_map ? "true" : "false") << RESET;
 
-  node.declare_parameter<bool>("lio.eva.timer", false);
-  node.get_parameter("lio.eva.timer", g_time_eva);
-
   node.declare_parameter<bool>("lio.map.if_filter", false);
   node.get_parameter("lio.map.if_filter", g_if_filter);
 
@@ -875,31 +872,24 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
 }
 
 
-void ROSWrapper::pub_processing_time(double time, 
-  double current_time, double mean_time, double std_time)
-{
-  static auto pub_processing_time_ =
-    this->create_publisher<geometry_msgs::msg::PoseStamped>(
-        "/lio/processing_time", 10);
-  geometry_msgs::msg::PoseStamped msg;
-  msg.header.stamp = toRosTime(time);
-  msg.pose.position.x = current_time;
-  msg.pose.position.y = mean_time;
-  msg.pose.position.z = std_time;
-  pub_processing_time_->publish(msg);
-}
-
-
 void ROSWrapper::pub_localization_status(
     double time, const std::string& state, bool update_accepted,
     std::size_t input_points, std::size_t effective_points,
     double overlap_ratio, double mean_abs_residual,
-    double information_min_eigenvalue, int consecutive_good_frames,
-    int consecutive_bad_frames, double initial_alignment_fitness)
+    int consecutive_good_frames, int consecutive_bad_frames,
+    double initial_alignment_fitness)
 {
   std_msgs::msg::String state_msg;
   state_msg.data = state;
   pub_localization_state_->publish(state_msg);
+
+  const auto now = std::chrono::steady_clock::now();
+  if (last_diagnostics_publish_time_ !=
+          std::chrono::steady_clock::time_point{} &&
+      now - last_diagnostics_publish_time_ < std::chrono::seconds(1)) {
+    return;
+  }
+  last_diagnostics_publish_time_ = now;
 
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = toRosTime(time);
@@ -926,7 +916,6 @@ void ROSWrapper::pub_localization_status(
   add_value("effective_points", std::to_string(effective_points));
   add_value("overlap_ratio", std::to_string(overlap_ratio));
   add_value("mean_abs_residual", std::to_string(mean_abs_residual));
-  add_value("information_min_eigenvalue", std::to_string(information_min_eigenvalue));
   add_value("consecutive_good_frames", std::to_string(consecutive_good_frames));
   add_value("consecutive_bad_frames", std::to_string(consecutive_bad_frames));
   add_value("initial_alignment_fitness", std::to_string(initial_alignment_fitness));

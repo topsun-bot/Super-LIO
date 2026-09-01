@@ -17,7 +17,6 @@
 
 #include "basic/alias.h"
 #include "common/ds.h"
-#include "common/timer.h"
 #include "params.h"
 #include "ESKF.h"
 #include "OctVoxMap/OctVoxMap.hpp"
@@ -40,7 +39,6 @@ struct RegistrationQuality {
   std::size_t effective_points = 0;
   double overlap_ratio = 0.0;
   double mean_abs_residual = std::numeric_limits<double>::infinity();
-  double information_min_eigenvalue = 0.0;
 };
 
 class SuperLIO{
@@ -54,7 +52,6 @@ public:
   virtual void init();
   void process();
   void saveMap();
-  void printTimeRecord();
 
 protected:
   void stateWaitKFInit();
@@ -108,8 +105,6 @@ protected:
   int consecutive_good_frames_ = 0;
   int consecutive_bad_frames_ = 0;
   double initial_alignment_fitness_ = std::numeric_limits<double>::infinity();
-
-  Timer time_record_;
 };
 
 } // namespace END.

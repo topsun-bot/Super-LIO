@@ -44,5 +44,3 @@
     lio.output.map: true
     lio.output.dense: true
     lio.output.pub_step: 3
-
-    lio.eva.timer: true

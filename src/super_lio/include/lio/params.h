@@ -28,9 +28,6 @@ namespace LI2Sup{
   extern std::atomic<bool> g_flag_run;
   extern bool g_flg_map_init;
 
-  /// evaluation
-  extern bool g_time_eva;
-
   extern bool g_save_map;
   extern bool g_if_filter;
   extern std::string g_map_name;

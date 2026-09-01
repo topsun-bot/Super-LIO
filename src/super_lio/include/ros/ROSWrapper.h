@@ -2,6 +2,7 @@
 #ifndef ROSWRAPPER_HPP_
 #define ROSWRAPPER_HPP_
 
+#include <chrono>
 #include <map>
 #include <tuple>
 #include <deque>
@@ -82,13 +83,12 @@ public:
                            const NavState& state);
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
                             const NavState& state);  
-  void pub_processing_time(double time, double current_time, double mean_time, double std_time);
   void pub_localization_status(
       double time, const std::string& state, bool update_accepted,
       std::size_t input_points, std::size_t effective_points,
       double overlap_ratio, double mean_abs_residual,
-      double information_min_eigenvalue, int consecutive_good_frames,
-      int consecutive_bad_frames, double initial_alignment_fitness);
+      int consecutive_good_frames, int consecutive_bad_frames,
+      double initial_alignment_fitness);
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
@@ -147,6 +147,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_localization_state_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diagnostics_;
+  std::chrono::steady_clock::time_point last_diagnostics_publish_time_{};
 };
 
 } // namespace END.

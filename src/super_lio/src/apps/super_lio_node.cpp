@@ -32,7 +32,6 @@ int main(int argc, char** argv){
   executor.spin();
 
   lio->saveMap();
-  lio->printTimeRecord();
 
   rclcpp::shutdown();
   return 0;

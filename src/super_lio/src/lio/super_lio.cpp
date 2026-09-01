@@ -2,8 +2,6 @@
 #include "lio/super_lio.h"
 
 #include <algorithm>
-#include <Eigen/Eigenvalues>
-#include <sys/resource.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include <tbb/concurrent_vector.h>
@@ -224,17 +222,10 @@ bool SuperLIO::map_init(){
 
 void SuperLIO::stateProcess(){
   frame_num_++;
-  if(g_time_eva){
-    time_record_.Evaluate([this](){Propagation_Undistort();}, "[Undistort]");
-    time_record_.Evaluate([this]() { DownSample(); }, "[DownSample]");
-    time_record_.Evaluate([this]() { Observe(); }, "[Observe]");
-    time_record_.Evaluate([this]() { UpdateMap(); }, "[UpdateMap]");
-  }else{
-    Propagation_Undistort();
-    DownSample();
-    Observe();
-    UpdateMap();
-  }
+  Propagation_Undistort();
+  DownSample();
+  Observe();
+  UpdateMap();
   updateLocalizationHealth();
   Output();
   caceData();
@@ -278,7 +269,6 @@ void SuperLIO::publishLocalizationStatus() {
       registration_quality_.effective_points,
       registration_quality_.overlap_ratio,
       registration_quality_.mean_abs_residual,
-      registration_quality_.information_min_eigenvalue,
       consecutive_good_frames_, consecutive_bad_frames_,
       initial_alignment_fitness_);
 }
@@ -422,14 +412,6 @@ void SuperLIO::saveMap(){
     LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
     LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
   }
-}
-
-
-inline double get_cpu_time_seconds() {
-  struct rusage usage;
-  getrusage(RUSAGE_SELF, &usage);
-  return usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6 +
-         usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
 }
 
 
@@ -624,11 +606,6 @@ void SuperLIO::Observe(){
     registration_quality_.mean_abs_residual = effective_points == 0 ?
         std::numeric_limits<double>::infinity() :
         sum_abs_residual / static_cast<double>(effective_points);
-    Eigen::SelfAdjointEigenSolver<M6d> eigen_solver(sum_HTVH);
-    if (eigen_solver.info() == Eigen::Success) {
-      registration_quality_.information_min_eigenvalue =
-          std::max(0.0, eigen_solver.eigenvalues().minCoeff());
-    }
 
     if(need_converge) return;
 
@@ -692,32 +669,30 @@ void SuperLIO::Output(){
     data_wrapper_->pub_cloud_body_pose(ds_undistort_, state);
   }
 
+  if (!g_visual_map) {
+    return;
+  }
+
+  static int count = -1;
+  count++;
+  if (count % g_pub_step != 0) {
+    return;
+  }
+  count = 0;
+
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
   transformation.block<3, 1>(0, 3) = state.p.cast<float>();
 
   CloudPtr world_pc(new PointCloudType());
-  
-  if(g_visual_map){
-    static int count = -1;
-    count++;
-    if(count % g_pub_step != 0){
-      return;
-    }
-    count = 0;
-    if(g_visual_dense){
-      pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
-    }else{
-      pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
-      data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
-    }
-  }
-}
 
-void SuperLIO::printTimeRecord(){
-  if(!g_time_eva) return;
-  time_record_.PrintAll();
+  if(g_visual_dense){
+    pcl::transformPointCloud(*scan_undistort_full_, *world_pc, transformation);
+    data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+  }else{
+    pcl::transformPointCloud(*ds_undistort_, *world_pc, transformation);
+    data_wrapper_->pub_cloud_world(world_pc, state.timestamp);
+  }
 }
 
 } // namespace END.
