@@ -8,7 +8,6 @@
 #include <tbb/enumerable_thread_specific.h>
 
 #include <pcl/registration/icp.h>
-#include <pcl/registration/ndt.h>
 #include <pcl/kdtree/kdtree_flann.h>
 
 
@@ -67,6 +66,7 @@ inline bool compute_error(
 
 
 void SuperLIOReLoc::init(){
+  setLocalizationState(LocalizationState::RELOCALIZING);
   ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
   kf_.reset(new ESKF());
   data_wrapper_->setESKF(kf_);
@@ -81,6 +81,8 @@ void SuperLIOReLoc::init(){
   points_world_v3_.reserve(21000);
   abcd_vec_.resize(20000);
   effect_knn_idxs_.resize(20000);
+  effect_mask_.resize(20000);
+  effect_knn_mask_.resize(20000);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
@@ -195,46 +197,185 @@ bool SuperLIOReLoc::kf_init(){
   init_guess_T.block<3, 1>(0, 3) = init_guess_t_;
 
 
-  pcl::PointCloud<pcl::PointXYZI>::Ptr tmp_src(new pcl::PointCloud<pcl::PointXYZI>());
-  pcl::transformPointCloud(*init_obs_data_, *tmp_src, g_lidar_imu.matrix().cast<float>());
+  PointCloudType::Ptr source_imu(new PointCloudType());
+  pcl::transformPointCloud(
+      *init_obs_data_, *source_imu, g_lidar_imu.matrix().cast<float>());
 
-  pcl::NormalDistributionsTransform<pcl::PointXYZI, pcl::PointXYZI> ndt;
-  ndt.setTransformationEpsilon(1e-4);
-  ndt.setEuclideanFitnessEpsilon(1e-4);
-  ndt.setMaximumIterations(25);
-  ndt.setResolution(1.0);
-  ndt.setInputTarget(point_map_);
+  PointCloudType::Ptr source(new PointCloudType());
+  pcl::VoxelGrid<PointType> source_filter;
+  source_filter.setLeafSize(
+      g_reloc_source_voxel_size, g_reloc_source_voxel_size,
+      g_reloc_source_voxel_size);
+  source_filter.setInputCloud(source_imu);
+  source_filter.filter(*source);
 
-  pcl::IterativeClosestPoint<pcl::PointXYZI, pcl::PointXYZI> icp;
-  icp.setMaxCorrespondenceDistance(4.0);
-  icp.setMaximumIterations(40);
-  icp.setTransformationEpsilon(1e-4);
-  icp.setEuclideanFitnessEpsilon(1e-4);
-  icp.setRANSACIterations(0);
-  icp.setInputTarget(point_map_);
+  const auto select_local_target = [&](double radius) {
+    PointCloudType::Ptr selected(new PointCloudType());
+    selected->reserve(point_map_->size() / 4 + 1);
+    const double radius_sq = radius * radius;
+    for (const auto& point : *point_map_) {
+      const double dx = static_cast<double>(point.x) - init_guess_t_.x();
+      const double dy = static_cast<double>(point.y) - init_guess_t_.y();
+      const double dz = std::abs(static_cast<double>(point.z) - init_guess_t_.z());
+      if (dx * dx + dy * dy <= radius_sq && dz <= g_reloc_local_search_z) {
+        selected->push_back(point);
+      }
+    }
+    return selected;
+  };
 
-  ndt.setInputSource(tmp_src);
-  icp.setInputSource(tmp_src);
+  PointCloudType::Ptr local_target =
+      select_local_target(g_reloc_local_search_radius);
+  if (local_target->size() < 200) {
+    local_target = select_local_target(2.0 * g_reloc_local_search_radius);
+  }
 
-  pcl::PointCloud<pcl::PointXYZI>::Ptr unused_result(new pcl::PointCloud<pcl::PointXYZI>());
-  ndt.align(*unused_result, init_guess_T.matrix().cast<float>());
-  icp.align(*unused_result, ndt.getFinalTransformation());
+  PointCloudType::Ptr target(new PointCloudType());
+  pcl::VoxelGrid<PointType> target_filter;
+  target_filter.setLeafSize(
+      g_reloc_target_voxel_size, g_reloc_target_voxel_size,
+      g_reloc_target_voxel_size);
+  target_filter.setInputCloud(local_target);
+  target_filter.filter(*target);
 
-  if (icp.hasConverged() == false || icp.getFitnessScore() > 1.5)
-  // if (icp.hasConverged() == false)
-  {
-    /// reset init state.
+  if (source->size() < 100 || target->size() < 200) {
     imu_cout = 0;
     init_frame_count = 0;
     init_obs_data_->clear();
     mean_gyro = V3::Zero();
     mean_acce = V3::Zero();
-    LOG(INFO) << RED << " ---> Global ICP Converged Fail! FitnessScore: " << icp.getFitnessScore() << RESET;
+    initial_alignment_fitness_ = std::numeric_limits<double>::infinity();
+    LOG(WARNING) << " ---> Local relocation rejected: source=" << source->size()
+                 << " target=" << target->size()
+                 << " around trusted pose (" << init_guess_t_.transpose() << ")";
     return false;
-  } else{
-    init_guess_T = icp.getFinalTransformation().cast<scalar>();
-    LOG(INFO) << GREEN << " ---> Global ICP Converged Succeed! FitnessScore: " << icp.getFitnessScore() << RESET;
   }
+
+  struct SeedOffset {
+    double dx;
+    double dy;
+    double dyaw_deg;
+  };
+  std::vector<SeedOffset> offsets{{0.0, 0.0, 0.0}};
+  if (g_reloc_hypothesis_xy_offset > 0.0) {
+    offsets.push_back({ g_reloc_hypothesis_xy_offset, 0.0, 0.0});
+    offsets.push_back({-g_reloc_hypothesis_xy_offset, 0.0, 0.0});
+    offsets.push_back({0.0,  g_reloc_hypothesis_xy_offset, 0.0});
+    offsets.push_back({0.0, -g_reloc_hypothesis_xy_offset, 0.0});
+  }
+  if (g_reloc_hypothesis_yaw_deg > 0.0) {
+    offsets.push_back({0.0, 0.0,  g_reloc_hypothesis_yaw_deg});
+    offsets.push_back({0.0, 0.0, -g_reloc_hypothesis_yaw_deg});
+  }
+
+  pcl::KdTreeFLANN<PointType> target_tree;
+  target_tree.setInputCloud(target);
+  const float max_correspondence_sq = static_cast<float>(
+      g_reloc_max_correspondence_distance *
+      g_reloc_max_correspondence_distance);
+  const Eigen::Matrix4f base_guess = init_guess_T.matrix().cast<float>();
+  Eigen::Matrix4f best_transform = base_guess;
+  double best_fitness = std::numeric_limits<double>::infinity();
+  double best_overlap = 0.0;
+  bool found_candidate = false;
+
+  const auto alignment_start = std::chrono::steady_clock::now();
+  for (std::size_t hypothesis_index = 0;
+       hypothesis_index < offsets.size(); ++hypothesis_index) {
+    const auto& offset = offsets[hypothesis_index];
+    Eigen::Matrix4f guess = base_guess;
+    const float yaw_rad = static_cast<float>(offset.dyaw_deg * M_PI / 180.0);
+    const Eigen::Matrix3f yaw_rotation =
+        Eigen::AngleAxisf(yaw_rad, Eigen::Vector3f::UnitZ()).toRotationMatrix();
+    guess.block<3, 3>(0, 0) = yaw_rotation * guess.block<3, 3>(0, 0);
+    guess(0, 3) += static_cast<float>(offset.dx);
+    guess(1, 3) += static_cast<float>(offset.dy);
+
+    pcl::IterativeClosestPoint<PointType, PointType> icp;
+    icp.setMaxCorrespondenceDistance(g_reloc_max_correspondence_distance);
+    icp.setMaximumIterations(35);
+    icp.setTransformationEpsilon(1e-4);
+    icp.setEuclideanFitnessEpsilon(1e-4);
+    icp.setRANSACIterations(0);
+    icp.setInputTarget(target);
+    icp.setInputSource(source);
+
+    PointCloudType aligned;
+    icp.align(aligned, guess);
+    if (!icp.hasConverged()) {
+      LOG(INFO) << " ---> relocation hypothesis " << hypothesis_index
+                << " did not converge";
+      continue;
+    }
+
+    const Eigen::Matrix4f final_transform = icp.getFinalTransformation();
+    if (!final_transform.allFinite()) continue;
+    const double fitness =
+        icp.getFitnessScore(g_reloc_max_correspondence_distance);
+
+    std::size_t inlier_count = 0;
+    std::vector<int> nearest_index(1);
+    std::vector<float> nearest_distance_sq(1);
+    for (const auto& point : aligned) {
+      if (target_tree.nearestKSearch(
+              point, 1, nearest_index, nearest_distance_sq) > 0 &&
+          nearest_distance_sq.front() <= max_correspondence_sq) {
+        ++inlier_count;
+      }
+    }
+    const double overlap = aligned.empty() ? 0.0 :
+        static_cast<double>(inlier_count) /
+        static_cast<double>(aligned.size());
+
+    const Eigen::Matrix4f correction = base_guess.inverse() * final_transform;
+    const double translation_correction =
+        correction.block<3, 1>(0, 3).norm();
+    const Eigen::AngleAxisf rotation_correction(
+        correction.block<3, 3>(0, 0));
+    const double rotation_correction_deg =
+        std::abs(static_cast<double>(rotation_correction.angle())) *
+        180.0 / M_PI;
+
+    const bool accepted = std::isfinite(fitness) &&
+        fitness <= g_reloc_max_fitness &&
+        overlap >= g_reloc_min_overlap_ratio &&
+        translation_correction <= g_reloc_max_seed_translation &&
+        rotation_correction_deg <= g_reloc_max_seed_rotation_deg;
+    LOG(INFO) << " ---> relocation hypothesis " << hypothesis_index
+              << " fitness=" << fitness << " overlap=" << overlap
+              << " correction=" << translation_correction << "m/"
+              << rotation_correction_deg << "deg accepted=" << accepted;
+
+    if (accepted && fitness < best_fitness) {
+      found_candidate = true;
+      best_fitness = fitness;
+      best_overlap = overlap;
+      best_transform = final_transform;
+    }
+    if (hypothesis_index == 0 && accepted &&
+        fitness <= g_reloc_primary_accept_fitness) {
+      break;
+    }
+  }
+
+  const double alignment_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - alignment_start).count();
+  initial_alignment_fitness_ = best_fitness;
+  if (!found_candidate) {
+    imu_cout = 0;
+    init_frame_count = 0;
+    init_obs_data_->clear();
+    mean_gyro = V3::Zero();
+    mean_acce = V3::Zero();
+    LOG(WARNING) << " ---> Local relocation failed around trusted pose after "
+                 << alignment_ms << " ms; keeping RELOCALIZING";
+    return false;
+  }
+
+  init_guess_T = best_transform.cast<scalar>();
+  LOG(INFO) << GREEN << " ---> Local relocation succeeded in " << alignment_ms
+            << " ms, fitness=" << best_fitness
+            << " overlap=" << best_overlap << RESET;
 
   LOG(INFO) << GREEN << "\n" << init_guess_T << RESET;
 
@@ -252,8 +393,10 @@ bool SuperLIOReLoc::kf_init(){
   /// The horizontal initial state of the imu in the robot coordinate system.
   state.R = SO3(init_guess_T.block<3, 3>(0, 0));
   state.p = init_guess_T.block<3, 1>(0, 3);
-  state.timestamp = -1.0;
+  state.timestamp = measures_.lidar.end_time;
+  kf_->SetObsTime(measures_.lidar.end_time);
   kf_->SetX(state);
+  kf_->SetLastObsTime(measures_.lidar.end_time);
   sys_init_pose_ = kf_->GetSE3();
 
   {

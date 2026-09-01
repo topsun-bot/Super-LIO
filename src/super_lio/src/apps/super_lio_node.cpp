@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/executors/multi_threaded_executor.hpp>
 
 #include "ros/ROSWrapper.h"
 #include "lio/super_lio_reloc.h"
@@ -22,10 +23,13 @@ int main(int argc, char** argv){
   auto timer = data_wrapper->create_wall_timer(
     std::chrono::milliseconds(2),
     [lio]() { lio->process(); },
-    data_wrapper->getSensorCallbackGroup()
+    data_wrapper->getComputeCallbackGroup()
   );
 
-  rclcpp::spin(data_wrapper);
+  rclcpp::executors::MultiThreadedExecutor executor(
+      rclcpp::ExecutorOptions(), 2);
+  executor.add_node(data_wrapper);
+  executor.spin();
 
   lio->saveMap();
   lio->printTimeRecord();

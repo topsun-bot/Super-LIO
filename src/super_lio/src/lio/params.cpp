@@ -74,4 +74,24 @@ namespace LI2Sup{
   bool g_update_map = false;
   double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  int g_health_min_effective_points = 20;
+  double g_health_min_overlap_ratio = 0.02;
+  double g_health_max_mean_residual = 0.30;
+  int g_health_degraded_after_bad_frames = 2;
+  int g_health_lost_after_bad_frames = 15;
+  int g_health_recover_after_good_frames = 3;
+
+  double g_reloc_local_search_radius = 15.0;
+  double g_reloc_local_search_z = 3.0;
+  double g_reloc_source_voxel_size = 0.20;
+  double g_reloc_target_voxel_size = 0.20;
+  double g_reloc_max_correspondence_distance = 1.5;
+  double g_reloc_hypothesis_xy_offset = 0.5;
+  double g_reloc_hypothesis_yaw_deg = 10.0;
+  double g_reloc_primary_accept_fitness = 0.20;
+  double g_reloc_max_fitness = 0.60;
+  double g_reloc_min_overlap_ratio = 0.15;
+  double g_reloc_max_seed_translation = 2.0;
+  double g_reloc_max_seed_rotation_deg = 30.0;
+
 }

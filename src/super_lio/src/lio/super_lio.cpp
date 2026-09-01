@@ -1,6 +1,8 @@
 
 #include "lio/super_lio.h"
 
+#include <algorithm>
+#include <Eigen/Eigenvalues>
 #include <sys/resource.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
@@ -11,6 +13,26 @@
 using namespace BASIC;
 
 namespace LI2Sup{
+
+const char* SuperLIO::localizationStateName(LocalizationState state) {
+  switch (state) {
+    case LocalizationState::INITIALIZING: return "INITIALIZING";
+    case LocalizationState::RELOCALIZING: return "RELOCALIZING";
+    case LocalizationState::TRACKING: return "TRACKING";
+    case LocalizationState::DEGRADED: return "DEGRADED";
+    case LocalizationState::LOST: return "LOST";
+  }
+  return "UNKNOWN";
+}
+
+
+void SuperLIO::setLocalizationState(LocalizationState state) {
+  if (localization_state_ == state) return;
+  LOG(INFO) << " ---> [SuperLIO] localization state "
+            << localizationStateName(localization_state_) << " -> "
+            << localizationStateName(state);
+  localization_state_ = state;
+}
 
 inline bool calc_plane_coeff(const int N, const std::array<V3, 5>& points, std::array<double, 4>& abcd)
 {
@@ -79,6 +101,8 @@ void SuperLIO::init(){
   points_world_v3_.reserve(21000);
   abcd_vec_.resize(20000);
   effect_knn_idxs_.resize(20000);
+  effect_mask_.resize(20000);
+  effect_knn_mask_.resize(20000);
   voxel_grid_fliter_.setLeafSize(g_voxel_fliter_size);
 
   state_fn_ = &SuperLIO::stateWaitKFInit;
@@ -98,8 +122,14 @@ void SuperLIO::stateWaitKFInit()
 void SuperLIO::stateWaitMapInit()
 {
   if (map_init()) {
-    kf_->init_ = true;
+    kf_->SetInitialized(true);
     state_fn_ = &SuperLIO::stateProcess;
+    consecutive_good_frames_ = 0;
+    consecutive_bad_frames_ = 0;
+    // Map/KF initialization only means that tracking can start.  Keep the
+    // node in INITIALIZING/RELOCALIZING until several real scan-to-map
+    // updates pass the quality gates; otherwise downstream consumers see a
+    // false TRACKING pulse before localization has been verified.
     LOG(INFO) << GREEN << " ---> [SuperLIO]: Map init done" << RESET;
   }
 }
@@ -109,6 +139,7 @@ void SuperLIO::process(){
     return;
   }
   (this->*state_fn_)();
+  publishLocalizationStatus();
 }
 
 
@@ -204,8 +235,52 @@ void SuperLIO::stateProcess(){
     Observe();
     UpdateMap();
   }
+  updateLocalizationHealth();
   Output();
   caceData();
+}
+
+
+void SuperLIO::updateLocalizationHealth() {
+  const bool quality_good = registration_quality_.update_accepted &&
+      registration_quality_.effective_points >=
+          static_cast<std::size_t>(g_health_min_effective_points) &&
+      registration_quality_.overlap_ratio >= g_health_min_overlap_ratio &&
+      std::isfinite(registration_quality_.mean_abs_residual) &&
+      registration_quality_.mean_abs_residual <= g_health_max_mean_residual;
+
+  if (quality_good) {
+    ++consecutive_good_frames_;
+    consecutive_bad_frames_ = 0;
+    if (localization_state_ != LocalizationState::TRACKING &&
+        consecutive_good_frames_ >= g_health_recover_after_good_frames) {
+      setLocalizationState(LocalizationState::TRACKING);
+    }
+    return;
+  }
+
+  consecutive_good_frames_ = 0;
+  ++consecutive_bad_frames_;
+  if (consecutive_bad_frames_ >= g_health_lost_after_bad_frames) {
+    setLocalizationState(LocalizationState::LOST);
+  } else if (consecutive_bad_frames_ >= g_health_degraded_after_bad_frames) {
+    setLocalizationState(LocalizationState::DEGRADED);
+  }
+}
+
+
+void SuperLIO::publishLocalizationStatus() {
+  data_wrapper_->pub_localization_status(
+      measures_.lidar.end_time,
+      localizationStateName(localization_state_),
+      registration_quality_.update_accepted,
+      registration_quality_.input_points,
+      registration_quality_.effective_points,
+      registration_quality_.overlap_ratio,
+      registration_quality_.mean_abs_residual,
+      registration_quality_.information_min_eigenvalue,
+      consecutive_good_frames_, consecutive_bad_frames_,
+      initial_alignment_fitness_);
 }
 
 
@@ -386,27 +461,36 @@ void SuperLIO::Propagation_Undistort(){
       auto& pt_full = scan_undistort_full_->points[idx];
       const auto& pt = raw_pc->points[idx];
       pt_full.intensity = pt.intensity;
-      double query_time = start_time + pt.offset_time;
-      if (query_time > propagate_states_.back().time) {
-        V3 raw(pt.x, pt.y, pt.z);
-        V3 eigen_point = TLI_R * raw + TLI_t;
+      const auto use_uncompensated_point = [&]() {
+        const V3 raw(pt.x, pt.y, pt.z);
+        const V3 eigen_point = TLI_R * raw + TLI_t;
         pt_full.x = eigen_point[0];
         pt_full.y = eigen_point[1];
         pt_full.z = eigen_point[2];
+      };
+      double query_time = start_time + pt.offset_time;
+      if (propagate_states_.size() < 2 || !std::isfinite(query_time) ||
+          query_time <= propagate_states_.front().time ||
+          query_time > propagate_states_.back().time) {
+        use_uncompensated_point();
         continue;
       }
-      auto match_iter = propagate_states_.begin();
-      for (auto iter = propagate_states_.begin(); iter != propagate_states_.end(); ++iter) {
-        auto next_iter = std::next(iter);
-        if (iter->time < query_time && next_iter->time >= query_time) {
-          match_iter = iter;
-          break;
-        }
+      const auto match_iter_n = std::lower_bound(
+        propagate_states_.begin(), propagate_states_.end(), query_time,
+        [](const DynamicState & state, double time) { return state.time < time; });
+      if (match_iter_n == propagate_states_.begin() ||
+          match_iter_n == propagate_states_.end()) {
+        use_uncompensated_point();
+        continue;
       }
-      auto match_iter_n = std::next(match_iter);
+      const auto match_iter = std::prev(match_iter_n);
       double dt = match_iter_n->time - match_iter->time;
       double tau = query_time - match_iter->time;
-      double s   = tau / dt;
+      if (!std::isfinite(dt) || dt <= 1e-6 || !std::isfinite(tau)) {
+        use_uncompensated_point();
+        continue;
+      }
+      double s = std::clamp(tau / dt, 0.0, 1.0);
       R_h = match_iter->R;
       R_t = match_iter_n->R;
       p_h = match_iter->p;
@@ -435,12 +519,22 @@ void SuperLIO::DownSample(){
 struct ThreadACC{
   M6d HTVH = M6d::Zero();
   V6d HTVr = V6d::Zero();
+  std::size_t effective_points = 0;
+  double sum_abs_residual = 0.0;
   ThreadACC(): HTVH(M6d::Zero()), HTVr(V6d::Zero()) {}
 };
 
 
 void SuperLIO::Observe(){
   size_t ptsize = ds_undistort_->size();
+  registration_quality_ = RegistrationQuality{};
+  registration_quality_.input_points = ptsize;
+  if (effect_knn_idxs_.size() < ptsize) {
+    effect_knn_idxs_.resize(ptsize);
+    abcd_vec_.resize(ptsize);
+    effect_mask_.resize(ptsize);
+    effect_knn_mask_.resize(ptsize);
+  }
   
   static std::vector<float> _lengths;
   points_body_v3_.resize(ptsize);
@@ -458,7 +552,8 @@ void SuperLIO::Observe(){
   ivox_->reset_max_group();
   int iter_num = 0;
 
-  kf_->UpdateObserve([&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
+  const bool update_accepted = kf_->UpdateObserve(
+    [&, this](const ESKF::KFState &kf_state, M6 &HTVH, V6 &HTVr) {
     const SE3 pose = kf_state.pose;
     const bool need_converge = kf_state.need_converge;
     const M3d R_transpose = (pose.R_.transpose()).cast<double>();
@@ -504,18 +599,36 @@ void SuperLIO::Observe(){
       
             local_acc.HTVH += J * 1000 * J.transpose();
             local_acc.HTVr -= J * 1000 * error;
+            ++local_acc.effective_points;
+            local_acc.sum_abs_residual += std::abs(static_cast<double>(error));
           }
         }
     });
 
     M6d sum_HTVH = M6d::Zero();
     V6d sum_HTVr = V6d::Zero();
+    std::size_t effective_points = 0;
+    double sum_abs_residual = 0.0;
     for(const auto& local_acc : tls_acc){
       sum_HTVH += local_acc.HTVH;
       sum_HTVr += local_acc.HTVr;
+      effective_points += local_acc.effective_points;
+      sum_abs_residual += local_acc.sum_abs_residual;
     }
     HTVH = sum_HTVH.cast<scalar>();
     HTVr = sum_HTVr.cast<scalar>();
+
+    registration_quality_.effective_points = effective_points;
+    registration_quality_.overlap_ratio = ptsize == 0 ? 0.0 :
+        static_cast<double>(effective_points) / static_cast<double>(ptsize);
+    registration_quality_.mean_abs_residual = effective_points == 0 ?
+        std::numeric_limits<double>::infinity() :
+        sum_abs_residual / static_cast<double>(effective_points);
+    Eigen::SelfAdjointEigenSolver<M6d> eigen_solver(sum_HTVH);
+    if (eigen_solver.info() == Eigen::Success) {
+      registration_quality_.information_min_eigenvalue =
+          std::max(0.0, eigen_solver.eigenvalues().minCoeff());
+    }
 
     if(need_converge) return;
 
@@ -531,7 +644,17 @@ void SuperLIO::Observe(){
     effect_knn_num_ = _effect_knn_num;
 
     iter_num++;
-  });
+    });
+
+  if (!update_accepted) {
+    static int rejected_update_count = 0;
+    rejected_update_count++;
+    if (rejected_update_count == 1 || rejected_update_count % 20 == 0) {
+      LOG(WARNING) << " ---> Rejected non-finite or physically impossible LIO update (count: "
+                   << rejected_update_count << ")";
+    }
+  }
+  registration_quality_.update_accepted = update_accepted;
 
   frame_num_++;
 }

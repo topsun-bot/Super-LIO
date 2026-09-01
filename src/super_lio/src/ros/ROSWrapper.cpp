@@ -2,6 +2,8 @@
 #include "ros/ROSWrapper.h"
 #include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
 
+#include <algorithm>
+
 
 using namespace BASIC;
 
@@ -190,6 +192,76 @@ void LoadParamFromRos(rclcpp::Node& node)
   g_init_pitch = init_pose[4];
   g_init_yaw   = init_pose[5];
 
+  // Allow a map profile to override the complete startup guess without
+  // rewriting the shared relocation YAML.
+  node.declare_parameter<double>("lio.relocation.initialpose_x", g_init_px);
+  node.get_parameter("lio.relocation.initialpose_x", g_init_px);
+  node.declare_parameter<double>("lio.relocation.initialpose_y", g_init_py);
+  node.get_parameter("lio.relocation.initialpose_y", g_init_py);
+  node.declare_parameter<double>("lio.relocation.initialpose_z", g_init_pz);
+  node.get_parameter("lio.relocation.initialpose_z", g_init_pz);
+  node.declare_parameter<double>("lio.relocation.initialpose_yaw", g_init_yaw);
+  node.get_parameter("lio.relocation.initialpose_yaw", g_init_yaw);
+
+  node.declare_parameter<int>("lio.health.min_effective_points", 20);
+  node.get_parameter("lio.health.min_effective_points", g_health_min_effective_points);
+  node.declare_parameter<double>("lio.health.min_overlap_ratio", 0.02);
+  node.get_parameter("lio.health.min_overlap_ratio", g_health_min_overlap_ratio);
+  node.declare_parameter<double>("lio.health.max_mean_residual", 0.30);
+  node.get_parameter("lio.health.max_mean_residual", g_health_max_mean_residual);
+  node.declare_parameter<int>("lio.health.degraded_after_bad_frames", 2);
+  node.get_parameter("lio.health.degraded_after_bad_frames", g_health_degraded_after_bad_frames);
+  node.declare_parameter<int>("lio.health.lost_after_bad_frames", 15);
+  node.get_parameter("lio.health.lost_after_bad_frames", g_health_lost_after_bad_frames);
+  node.declare_parameter<int>("lio.health.recover_after_good_frames", 3);
+  node.get_parameter("lio.health.recover_after_good_frames", g_health_recover_after_good_frames);
+
+  g_health_min_effective_points = std::max(1, g_health_min_effective_points);
+  g_health_min_overlap_ratio = std::clamp(g_health_min_overlap_ratio, 0.0, 1.0);
+  g_health_max_mean_residual = std::max(0.01, g_health_max_mean_residual);
+  g_health_degraded_after_bad_frames = std::max(1, g_health_degraded_after_bad_frames);
+  g_health_lost_after_bad_frames = std::max(
+      g_health_degraded_after_bad_frames, g_health_lost_after_bad_frames);
+  g_health_recover_after_good_frames = std::max(1, g_health_recover_after_good_frames);
+
+  node.declare_parameter<double>("lio.relocation.local_search_radius", 15.0);
+  node.get_parameter("lio.relocation.local_search_radius", g_reloc_local_search_radius);
+  node.declare_parameter<double>("lio.relocation.local_search_z", 3.0);
+  node.get_parameter("lio.relocation.local_search_z", g_reloc_local_search_z);
+  node.declare_parameter<double>("lio.relocation.source_voxel_size", 0.20);
+  node.get_parameter("lio.relocation.source_voxel_size", g_reloc_source_voxel_size);
+  node.declare_parameter<double>("lio.relocation.target_voxel_size", 0.20);
+  node.get_parameter("lio.relocation.target_voxel_size", g_reloc_target_voxel_size);
+  node.declare_parameter<double>("lio.relocation.max_correspondence_distance", 1.5);
+  node.get_parameter("lio.relocation.max_correspondence_distance", g_reloc_max_correspondence_distance);
+  node.declare_parameter<double>("lio.relocation.hypothesis_xy_offset", 0.5);
+  node.get_parameter("lio.relocation.hypothesis_xy_offset", g_reloc_hypothesis_xy_offset);
+  node.declare_parameter<double>("lio.relocation.hypothesis_yaw_deg", 10.0);
+  node.get_parameter("lio.relocation.hypothesis_yaw_deg", g_reloc_hypothesis_yaw_deg);
+  node.declare_parameter<double>("lio.relocation.primary_accept_fitness", 0.20);
+  node.get_parameter("lio.relocation.primary_accept_fitness", g_reloc_primary_accept_fitness);
+  node.declare_parameter<double>("lio.relocation.max_fitness", 0.60);
+  node.get_parameter("lio.relocation.max_fitness", g_reloc_max_fitness);
+  node.declare_parameter<double>("lio.relocation.min_overlap_ratio", 0.15);
+  node.get_parameter("lio.relocation.min_overlap_ratio", g_reloc_min_overlap_ratio);
+  node.declare_parameter<double>("lio.relocation.max_seed_translation", 2.0);
+  node.get_parameter("lio.relocation.max_seed_translation", g_reloc_max_seed_translation);
+  node.declare_parameter<double>("lio.relocation.max_seed_rotation_deg", 30.0);
+  node.get_parameter("lio.relocation.max_seed_rotation_deg", g_reloc_max_seed_rotation_deg);
+
+  g_reloc_local_search_radius = std::max(2.0, g_reloc_local_search_radius);
+  g_reloc_local_search_z = std::max(0.5, g_reloc_local_search_z);
+  g_reloc_source_voxel_size = std::max(0.05, g_reloc_source_voxel_size);
+  g_reloc_target_voxel_size = std::max(0.05, g_reloc_target_voxel_size);
+  g_reloc_max_correspondence_distance = std::max(0.2, g_reloc_max_correspondence_distance);
+  g_reloc_hypothesis_xy_offset = std::max(0.0, g_reloc_hypothesis_xy_offset);
+  g_reloc_hypothesis_yaw_deg = std::clamp(g_reloc_hypothesis_yaw_deg, 0.0, 45.0);
+  g_reloc_primary_accept_fitness = std::max(0.0, g_reloc_primary_accept_fitness);
+  g_reloc_max_fitness = std::max(g_reloc_primary_accept_fitness, g_reloc_max_fitness);
+  g_reloc_min_overlap_ratio = std::clamp(g_reloc_min_overlap_ratio, 0.01, 1.0);
+  g_reloc_max_seed_translation = std::max(0.1, g_reloc_max_seed_translation);
+  g_reloc_max_seed_rotation_deg = std::clamp(g_reloc_max_seed_rotation_deg, 1.0, 90.0);
+
   LOG(INFO) << GREEN << " ---> [Params]: Load from ROS2 parameter server."
             << RESET;
 }
@@ -288,6 +360,18 @@ void ROSWrapper::setupIO(){
   //// input ======================================
   cb_sensor_ = this->create_callback_group(
       rclcpp::CallbackGroupType::MutuallyExclusive);
+  cb_compute_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+
+  const int max_imu_buffer_size =
+      this->declare_parameter<int>("lio.runtime.max_imu_buffer_size", 20000);
+  const int max_lidar_buffer_size =
+      this->declare_parameter<int>("lio.runtime.max_lidar_buffer_size", 50);
+  max_lidar_backlog_sec_ =
+      this->declare_parameter<double>("lio.runtime.max_lidar_backlog_sec", 1.5);
+  max_imu_buffer_size_ = static_cast<std::size_t>(std::max(100, max_imu_buffer_size));
+  max_lidar_buffer_size_ = static_cast<std::size_t>(std::max(2, max_lidar_buffer_size));
+  max_lidar_backlog_sec_ = std::max(0.2, max_lidar_backlog_sec_);
 
   rclcpp::SubscriptionOptions sub_opt;
   sub_opt.callback_group = cb_sensor_;
@@ -343,6 +427,14 @@ void ROSWrapper::setupIO(){
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "/lio/cloud_body", 10);
 
+  pub_localization_state_ =
+    this->create_publisher<std_msgs::msg::String>(
+        "/lio/localization_state", 10);
+
+  pub_diagnostics_ =
+    this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+        "/diagnostics", 10);
+
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
 }
@@ -358,17 +450,29 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
                  msg->angular_velocity.y,
                  msg->angular_velocity.z);
 
-  if (data.secs < last_timestamp_imu_) {
-    LOG(WARNING) << "imu loop back, clear buffer";
-    imu_buffer_.clear();
-    imu_buffer_.push_back(data);
-    last_timestamp_imu_ = data.secs;
-    // eskf_->Reset();   // todo:
-    return;
+  bool time_loop_back = false;
+  {
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    if (data.secs < last_timestamp_imu_) {
+      LOG(WARNING) << "imu loop back, clear buffer";
+      imu_buffer_.clear();
+      imu_buffer_.push_back(data);
+      last_timestamp_imu_ = data.secs;
+      time_loop_back = true;
+    } else {
+      imu_buffer_.push_back(data);
+      last_timestamp_imu_ = data.secs;
+      if (imu_buffer_.size() > max_imu_buffer_size_) {
+        const std::size_t drop_count = imu_buffer_.size() - max_imu_buffer_size_;
+        for (std::size_t i = 0; i < drop_count; ++i) {
+          imu_buffer_.pop_front();
+        }
+        LOG(WARNING) << "IMU buffer overflow, dropped " << drop_count
+                     << " oldest samples";
+      }
+    }
   }
-
-  imu_buffer_.push_back(data);
-  last_timestamp_imu_ = data.secs;
+  if (time_loop_back || !eskf_) return;
 
   DynamicState imu_state, robo_state;
   if(eskf_->Predict(data, imu_state, robo_state)){
@@ -441,7 +545,22 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   }
   lidar_data.start_time = stampToSec(msg->header.stamp);
   lidar_data.end_time   = lidar_data.start_time + offset_time;
-  lidar_buffer_.push_back(lidar_data);
+  std::lock_guard<std::mutex> lock(buffer_mutex_);
+  if (last_received_lidar_ >= 0.0 && lidar_data.end_time < last_received_lidar_) {
+    LOG(WARNING) << "lidar loop back, clear lidar buffer";
+    lidar_buffer_.clear();
+    lidar_pushed_ = false;
+    last_timestamp_lidar_ = -1.0;
+  }
+  last_received_lidar_ = lidar_data.end_time;
+  lidar_buffer_.push_back(std::move(lidar_data));
+  while (lidar_buffer_.size() > max_lidar_buffer_size_) {
+    if (lidar_pushed_) {
+      lidar_buffer_.pop_back();
+    } else {
+      lidar_buffer_.pop_front();
+    }
+  }
 }
 
 
@@ -460,6 +579,7 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
   {
     pcl::PointCloud<hesai_ros::Point> pl_orig;
     pcl::fromROSMsg(*msg, pl_orig);
+    if (pl_orig.empty()) return;
     lidar_data.pc->reserve(pl_orig.size() / g_filter_rate + 1);
     const double time_begin = pl_orig.points[0].timestamp;
     lidar_data.start_time = time_begin;
@@ -502,10 +622,11 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     for(std::size_t i = 0; i < pl_orig.size(); i += g_filter_rate){
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      offset_time = pt.time;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, pt.time);
     }
-    lidar_data.end_time = lidar_data.start_time + lidar_data.pc->points.back().offset_time;
+    lidar_data.end_time = lidar_data.start_time + offset_time;
     break;
   }
   case OUSTER:
@@ -529,13 +650,47 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
     return;
   }
   
-  lidar_buffer_.push_back(lidar_data);
+  if (!lidar_data.pc || lidar_data.pc->empty()) return;
+  std::lock_guard<std::mutex> lock(buffer_mutex_);
+  if (last_received_lidar_ >= 0.0 && lidar_data.end_time < last_received_lidar_) {
+    LOG(WARNING) << "lidar loop back, clear lidar buffer";
+    lidar_buffer_.clear();
+    lidar_pushed_ = false;
+    last_timestamp_lidar_ = -1.0;
+  }
+  last_received_lidar_ = lidar_data.end_time;
+  lidar_buffer_.push_back(std::move(lidar_data));
+  while (lidar_buffer_.size() > max_lidar_buffer_size_) {
+    if (lidar_pushed_) {
+      lidar_buffer_.pop_back();
+    } else {
+      lidar_buffer_.pop_front();
+    }
+  }
 }
 
 
 bool ROSWrapper::sync_measure(MeasureGroup& meas){
+  std::lock_guard<std::mutex> lock(buffer_mutex_);
   if (lidar_buffer_.empty() || imu_buffer_.empty()) {
     return false;
+  }
+
+  // A heavy startup alignment must not force the estimator to replay seconds
+  // of obsolete LiDAR frames.  Keep all IMU samples so the first retained scan
+  // still receives continuous propagation across the skipped interval.
+  if (!lidar_pushed_ && lidar_buffer_.size() > 1) {
+    const double cutoff = lidar_buffer_.back().end_time - max_lidar_backlog_sec_;
+    std::size_t dropped = 0;
+    while (lidar_buffer_.size() > 1 &&
+           lidar_buffer_.front().end_time < cutoff) {
+      lidar_buffer_.pop_front();
+      ++dropped;
+    }
+    if (dropped > 0) {
+      LOG(WARNING) << "Skipped " << dropped
+                   << " stale LiDAR frames after compute backlog";
+    }
   }
 
   if (!lidar_pushed_) {
@@ -735,6 +890,51 @@ void ROSWrapper::pub_processing_time(double time,
 }
 
 
+void ROSWrapper::pub_localization_status(
+    double time, const std::string& state, bool update_accepted,
+    std::size_t input_points, std::size_t effective_points,
+    double overlap_ratio, double mean_abs_residual,
+    double information_min_eigenvalue, int consecutive_good_frames,
+    int consecutive_bad_frames, double initial_alignment_fitness)
+{
+  std_msgs::msg::String state_msg;
+  state_msg.data = state;
+  pub_localization_state_->publish(state_msg);
+
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = toRosTime(time);
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = "super_lio/localization";
+  status.hardware_id = "livox_mid360";
+  status.message = state;
+  if (state == "TRACKING") {
+    status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+  } else if (state == "LOST") {
+    status.level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+  } else {
+    status.level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  }
+
+  const auto add_value = [&status](const std::string& key, const std::string& value) {
+    diagnostic_msgs::msg::KeyValue item;
+    item.key = key;
+    item.value = value;
+    status.values.push_back(std::move(item));
+  };
+  add_value("update_accepted", update_accepted ? "true" : "false");
+  add_value("input_points", std::to_string(input_points));
+  add_value("effective_points", std::to_string(effective_points));
+  add_value("overlap_ratio", std::to_string(overlap_ratio));
+  add_value("mean_abs_residual", std::to_string(mean_abs_residual));
+  add_value("information_min_eigenvalue", std::to_string(information_min_eigenvalue));
+  add_value("consecutive_good_frames", std::to_string(consecutive_good_frames));
+  add_value("consecutive_bad_frames", std::to_string(consecutive_bad_frames));
+  add_value("initial_alignment_fitness", std::to_string(initial_alignment_fitness));
+  array.status.push_back(std::move(status));
+  pub_diagnostics_->publish(array);
+}
+
+
 void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
   pcl::toROSMsg(*global_map, global_map_msg_);
   global_map_msg_.header.frame_id = "world";
@@ -768,6 +968,8 @@ void ROSWrapper::set_global_map(const BASIC::CloudPtr& global_map){
 
 void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_guess, bool flg_finish_init)
 {
+  rclcpp::SubscriptionOptions init_pose_options;
+  init_pose_options.callback_group = cb_compute_;
   static auto init_pose_sub =
     this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/initialpose", 1,
@@ -777,7 +979,7 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
           V3 init_translation;
           init_translation << msg->pose.pose.position.x,
                               msg->pose.pose.position.y,
-                              0.2;
+                              g_init_pz;
 
           double x = msg->pose.pose.orientation.x;
           double y = msg->pose.pose.orientation.y;
@@ -798,7 +1000,8 @@ void ROSWrapper::set_initial_data(BASIC::SE3& init_pose, bool& flg_get_init_gues
                           .eulerAngles(0, 1, 2)
                           .transpose()
                   << RESET;
-        });
+        },
+        init_pose_options);
 
   if (flg_finish_init) {
     init_pose_sub.reset();

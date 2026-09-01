@@ -1,5 +1,7 @@
 #include "lio/ESKF.h"
 
+#include <algorithm>
+
 using namespace BASIC;
 
 namespace LI2Sup{
@@ -70,6 +72,7 @@ void ESKF::SetInitialConditions(Options options, const V3& init_bg,
                                 const V3& init_ba, const float imu_scale,
                                 const V3& gravity) 
 {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   BuildNoise(options);
   options_ = options;
   bg_ = init_bg;
@@ -84,6 +87,7 @@ void ESKF::SetInitialConditions(Options options, const V3& init_bg,
 
 
 void ESKF::SetX(const SysState& x) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   last_imu_time_ = x.timestamp;      // TODO: The timestamp update is not strictly consistent.
   current_time_ = last_imu_time_;
   R_ = x.R;
@@ -94,6 +98,62 @@ void ESKF::SetX(const SysState& x) {
   fw_R_ = R_;
   fw_p_ = p_;
   fw_v_ = v_;
+  forward_time_ = -1.0;
+  SaveTrustedState();
+}
+
+
+bool ESKF::StateIsPhysicallyPlausible() const {
+  if (!R_.R_.allFinite() || !p_.allFinite() || !v_.allFinite() ||
+      !bg_.allFinite() || !ba_.allFinite() || !g_.allFinite() ||
+      !P_.allFinite()) {
+    return false;
+  }
+  if (v_.norm() > 5.0 || std::abs(g_.norm() - g_gravity_norm) > 1.0) {
+    return false;
+  }
+  if (!trusted_state_valid_) {
+    return true;
+  }
+  const double elapsed = std::clamp(current_obs_time_ - trusted_state_time_, 0.0, 1.0);
+  const double max_translation = 1.0 + 5.0 * elapsed;
+  const double translation = (p_ - trusted_p_).norm();
+  const double rotation = (trusted_R_.inverse() * R_).log_vee().norm();
+  return std::isfinite(translation) && std::isfinite(rotation) &&
+         translation <= max_translation && rotation <= M_PI / 4.0;
+}
+
+
+void ESKF::SaveTrustedState() {
+  trusted_state_valid_ = R_.R_.allFinite() && p_.allFinite() && v_.allFinite() &&
+                         bg_.allFinite() && ba_.allFinite() && g_.allFinite() &&
+                         P_.allFinite();
+  if (!trusted_state_valid_) return;
+  trusted_state_time_ = current_obs_time_;
+  trusted_R_ = R_;
+  trusted_p_ = p_;
+  trusted_v_ = v_;
+  trusted_bg_ = bg_;
+  trusted_ba_ = ba_;
+  trusted_g_ = g_;
+  trusted_P_ = P_;
+}
+
+
+void ESKF::RestoreTrustedState() {
+  if (!trusted_state_valid_) return;
+  R_ = trusted_R_;
+  p_ = trusted_p_;
+  v_ = trusted_v_;
+  bg_ = trusted_bg_;
+  ba_ = trusted_ba_;
+  g_ = trusted_g_;
+  P_ = trusted_P_;
+  dx_.setZero();
+  fw_R_ = R_;
+  fw_p_ = p_;
+  fw_v_ = v_;
+  forward_time_ = current_obs_time_;
 }
 
 
@@ -134,6 +194,7 @@ void ESKF::Update() {
 
 
 bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot){
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   if(!init_) {
     return false;
   }
@@ -147,7 +208,13 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 
   double dt = imu.secs - forward_time_;
 
-  if(dt < 0 || dt > 0.2){
+  if(!std::isfinite(dt) || dt < 0 || dt > 0.2 ||
+     !imu.acc.allFinite() || !imu.gyr.allFinite()){
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+    forward_time_ = imu.secs;
+    forward_last_imu_ = imu;
     return false;
   }
 
@@ -159,6 +226,19 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
   V3 new_p = fw_p_ + fw_v_ * dt + 0.5 * (fw_R_.R() * acc) * dt * dt + 0.5 * g_ * dt * dt;
   V3 new_v = fw_v_ + fw_R_.R() * acc * dt + g_ * dt;
   SO3 new_R = fw_R_ * SO3::Exp(gyr , dt);
+
+  const double trusted_elapsed = std::clamp(imu.secs - trusted_state_time_, 0.0, 1.0);
+  const double max_forward_translation = 2.0 + 5.0 * trusted_elapsed;
+  if (!new_R.R_.allFinite() || !new_p.allFinite() || !new_v.allFinite() ||
+      new_v.norm() > 5.0 ||
+      (trusted_state_valid_ && (new_p - trusted_p_).norm() > max_forward_translation)) {
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+    forward_time_ = imu.secs;
+    forward_last_imu_ = imu;
+    return false;
+  }
 
   fw_R_ = new_R;
   fw_v_ = new_v;
@@ -185,6 +265,7 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 
 
 bool ESKF::Predict(const IMUData& imu) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
 
   if(last_imu_time_ < 0){
     last_imu_time_ = imu.secs;
@@ -208,6 +289,13 @@ bool ESKF::Predict(const IMUData& imu) {
     current_time_ = current_obs_time_;
   }else{
     dt = imu.secs - last_imu_time_;
+  }
+
+  if (!std::isfinite(dt) || dt < 0.0 || dt > 0.2 ||
+      !imu.acc.allFinite() || !imu.gyr.allFinite()) {
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    return false;
   }
 
   V3 acc = 0.5 * (imu.acc + last_imu_.acc);
@@ -237,9 +325,22 @@ bool ESKF::Predict(const IMUData& imu) {
   P_ = f_x * P_ * f_x.transpose() + f_w * Q_ * f_w.transpose();
 
   global_acc_ = R_.R() * acc + g_;
-  p_ = p_ + v_ * dt + 0.5 * global_acc_ * dt * dt;
-  v_ = v_ + global_acc_ * dt;
-  R_ = R_ * SO3::Exp(body_omega_, dt);
+  const V3 new_p = p_ + v_ * dt + 0.5 * global_acc_ * dt * dt;
+  const V3 new_v = v_ + global_acc_ * dt;
+  const SO3 new_R = R_ * SO3::Exp(body_omega_, dt);
+  const double trusted_elapsed = std::clamp(current_obs_time_ - trusted_state_time_, 0.0, 1.0);
+  const double max_translation = 1.0 + 5.0 * trusted_elapsed;
+  if (!global_acc_.allFinite() || !new_p.allFinite() || !new_v.allFinite() ||
+      !new_R.R_.allFinite() || new_v.norm() > 5.0 ||
+      (trusted_state_valid_ && (new_p - trusted_p_).norm() > max_translation)) {
+    RestoreTrustedState();
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    return false;
+  }
+  p_ = new_p;
+  v_ = new_v;
+  R_ = new_R;
 
   last_imu_time_ = imu.secs;
   last_imu_ = imu;
@@ -249,6 +350,7 @@ bool ESKF::Predict(const IMUData& imu) {
 
 const int STATE_DIM = 18;
 bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
+  std::lock_guard<std::recursive_mutex> lock(state_mutex_);
   // propagated state
   SO3 R_pred = R_;
   V3  p_pred = p_;
@@ -266,6 +368,12 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   M18 Qk = M18::Zero();
   M18 K_x = M18::Zero();
 
+  if (!StateIsPhysicallyPlausible()) {
+    RestoreTrustedState();
+    last_obs_time_ = current_obs_time_;
+    return false;
+  }
+
   need_converge_ = false;
 
   for (int iter = 0; iter < options_.num_iterations_; ++iter) {
@@ -274,6 +382,11 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
     }
 
     obs(GetKFState(), HTVH, HTVr);
+    if (!HTVH.allFinite() || !HTVr.allFinite() || HTVH.trace() <= 1e-9) {
+      RestoreTrustedState();
+      last_obs_time_ = current_obs_time_;
+      return false;
+    }
 
     V18 dx_prior = V18::Zero();
     dx_prior.template block<3,1>(0,0)  = (R_pred.inverse() * R_).log_vee();
@@ -301,6 +414,11 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
     // information form
     M18 A = Pk.inverse() + HTRH;
     Qk = A.inverse();
+    if (!A.allFinite() || !Qk.allFinite()) {
+      RestoreTrustedState();
+      last_obs_time_ = current_obs_time_;
+      return false;
+    }
 
     V18 b = V18::Zero();
     b.template head<6>() = HTVr;
@@ -310,7 +428,22 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
     // dx = K_h + (K_x - I) * dx_prior
     dx_ = Qk * b + (K_x - M18::Identity()) * dx_prior;
 
+    if (!dx_.allFinite() ||
+        dx_.template block<3, 1>(0, 0).norm() > M_PI / 6.0 ||
+        dx_.template block<3, 1>(3, 0).norm() > 0.75 ||
+        dx_.template block<3, 1>(6, 0).norm() > 3.0) {
+      RestoreTrustedState();
+      last_obs_time_ = current_obs_time_;
+      return false;
+    }
+
     Update();
+
+    if (!StateIsPhysicallyPlausible()) {
+      RestoreTrustedState();
+      last_obs_time_ = current_obs_time_;
+      return false;
+    }
 
     if (dx_.lpNorm<Eigen::Infinity>() < options_.quit_eps_ && iter > 0) {
       break;
@@ -332,6 +465,7 @@ bool ESKF::UpdateObserve(ESKF::ObsFunc obs) {
   dx_.setZero();
 
   last_obs_time_ = current_obs_time_;
+  SaveTrustedState();
   return true;
 }
 

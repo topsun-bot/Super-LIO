@@ -98,6 +98,28 @@ namespace LI2Sup{
   extern bool g_update_map;
   extern double g_init_px, g_init_py, g_init_pz, g_init_roll, g_init_pitch, g_init_yaw;
 
+  /// localization health reporting (does not alter the ESKF update itself)
+  extern int g_health_min_effective_points;
+  extern double g_health_min_overlap_ratio;
+  extern double g_health_max_mean_residual;
+  extern int g_health_degraded_after_bad_frames;
+  extern int g_health_lost_after_bad_frames;
+  extern int g_health_recover_after_good_frames;
+
+  /// trusted-pose-centred startup relocation
+  extern double g_reloc_local_search_radius;
+  extern double g_reloc_local_search_z;
+  extern double g_reloc_source_voxel_size;
+  extern double g_reloc_target_voxel_size;
+  extern double g_reloc_max_correspondence_distance;
+  extern double g_reloc_hypothesis_xy_offset;
+  extern double g_reloc_hypothesis_yaw_deg;
+  extern double g_reloc_primary_accept_fitness;
+  extern double g_reloc_max_fitness;
+  extern double g_reloc_min_overlap_ratio;
+  extern double g_reloc_max_seed_translation;
+  extern double g_reloc_max_seed_rotation_deg;
+
 }
 
 #endif

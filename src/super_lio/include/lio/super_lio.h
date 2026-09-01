@@ -3,11 +3,13 @@
 #ifndef SUPER_LIO_H_
 #define SUPER_LIO_H_
 
+#include <cstdint>
 #include <queue>
 #include <vector>
 #include <iostream>
 #include <cassert>
 #include <filesystem>
+#include <limits>
 
 #include <pcl/io/pcd_io.h>
 #include <pcl/common/transforms.h>
@@ -23,6 +25,23 @@
 #include "ros/ROSWrapper.h"
 
 namespace LI2Sup{
+
+enum class LocalizationState : std::uint8_t {
+  INITIALIZING = 0,
+  RELOCALIZING = 1,
+  TRACKING = 2,
+  DEGRADED = 3,
+  LOST = 4,
+};
+
+struct RegistrationQuality {
+  bool update_accepted = false;
+  std::size_t input_points = 0;
+  std::size_t effective_points = 0;
+  double overlap_ratio = 0.0;
+  double mean_abs_residual = std::numeric_limits<double>::infinity();
+  double information_min_eigenvalue = 0.0;
+};
 
 class SuperLIO{
 public:
@@ -50,6 +69,10 @@ protected:
   virtual void Output();
   void caceData();
   void ProcessCaceMap();
+  void updateLocalizationHealth();
+  void publishLocalizationStatus();
+  void setLocalizationState(LocalizationState state);
+  static const char* localizationStateName(LocalizationState state);
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
@@ -73,12 +96,18 @@ protected:
 
   std::size_t effect_knn_num_ = 0;
   BASIC::VV3 points_world_v3_, points_body_v3_;
-  alignas(64) bool effect_mask_[20000] = {false};
-  alignas(64) bool effect_knn_mask_[20000] = {false};
+  std::vector<std::uint8_t> effect_mask_;
+  std::vector<std::uint8_t> effect_knn_mask_;
   std::vector<int> effect_knn_idxs_;
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
+
+  LocalizationState localization_state_ = LocalizationState::INITIALIZING;
+  RegistrationQuality registration_quality_;
+  int consecutive_good_frames_ = 0;
+  int consecutive_bad_frames_ = 0;
+  double initial_alignment_fitness_ = std::numeric_limits<double>::infinity();
 
   Timer time_record_;
 };
@@ -86,5 +115,3 @@ protected:
 } // namespace END.
 
 #endif
-
-

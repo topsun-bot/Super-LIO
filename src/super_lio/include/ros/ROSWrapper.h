@@ -7,6 +7,7 @@
 #include <deque>
 #include <vector>
 #include <execution>
+#include <mutex>
 
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
@@ -23,6 +24,10 @@
 #include <visualization_msgs/msg/marker.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include <pcl_conversions/pcl_conversions.h>
@@ -58,11 +63,13 @@ public:
   void setESKF(ESKF::Ptr& eskf) { eskf_ = eskf;}
 
   void clear(){
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
     lidar_buffer_.clear();
     imu_buffer_.clear();
     lidar_pushed_ = false;
     last_timestamp_imu_ = -1.0;
     last_timestamp_lidar_ = -1.0;
+    last_received_lidar_ = -1.0;
   }
 
   void pub_odom(const NavState&);
@@ -76,6 +83,12 @@ public:
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
                             const NavState& state);  
   void pub_processing_time(double time, double current_time, double mean_time, double std_time);
+  void pub_localization_status(
+      double time, const std::string& state, bool update_accepted,
+      std::size_t input_points, std::size_t effective_points,
+      double overlap_ratio, double mean_abs_residual,
+      double information_min_eigenvalue, int consecutive_good_frames,
+      int consecutive_bad_frames, double initial_alignment_fitness);
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
@@ -83,6 +96,10 @@ public:
 
   rclcpp::CallbackGroup::SharedPtr getSensorCallbackGroup() {
     return cb_sensor_;
+  }
+
+  rclcpp::CallbackGroup::SharedPtr getComputeCallbackGroup() {
+    return cb_compute_;
   }
 
 private:
@@ -95,15 +112,21 @@ private:
 
 private:
   rclcpp::CallbackGroup::SharedPtr cb_sensor_;
+  rclcpp::CallbackGroup::SharedPtr cb_compute_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_std_;
 
   std::deque<IMUData>   imu_buffer_;
   std::deque<LidarData> lidar_buffer_;
+  std::mutex buffer_mutex_;
   bool lidar_pushed_ = false;
   double last_timestamp_imu_ = -1.0;
   double last_timestamp_lidar_ = -1.0;
+  double last_received_lidar_ = -1.0;
+  std::size_t max_imu_buffer_size_ = 20000;
+  std::size_t max_lidar_buffer_size_ = 50;
+  double max_lidar_backlog_sec_ = 1.5;
 
   ESKF::Ptr eskf_{nullptr};
 
@@ -122,6 +145,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_localization_state_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pub_diagnostics_;
 };
 
 } // namespace END.

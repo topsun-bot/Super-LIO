@@ -1,6 +1,8 @@
 #ifndef ESKF_HPP_
 #define ESKF_HPP_
 
+#include <mutex>
+
 #include "basic/alias.h"
 #include "basic/Manifold.h"
 #include "common/ds.h"
@@ -57,37 +59,83 @@ public:
   using ObsFunc = std::function<void(const KFState& kf_state, BASIC::M6& HT_Vinv_H, BASIC::V6& HT_Vinv_r)>;
   bool UpdateObserve(ObsFunc obs);
 
-  double GetTime() const { return current_time_; }
+  double GetTime() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return current_time_;
+  }
 
-  SysState GetSysState() const { return SysState(current_time_, R_, p_, v_, bg_, ba_); }
+  SysState GetSysState() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return SysState(current_time_, R_, p_, v_, bg_, ba_);
+  }
 
-  NavState GetNavState() const { return NavState(current_time_, R_, p_, v_); }
+  NavState GetNavState() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return NavState(current_time_, R_, p_, v_);
+  }
 
-  DynamicState GetDynamicState() const { return DynamicState(current_time_, R_.R_, p_, v_, body_omega_, global_acc_); }
+  DynamicState GetDynamicState() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return DynamicState(current_time_, R_.R_, p_, v_, body_omega_, global_acc_);
+  }
 
-  KFState GetKFState() const { return KFState{need_converge_, GetSE3()}; }
+  KFState GetKFState() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return KFState{need_converge_, BASIC::SE3(R_, p_)};
+  }
 
-  Pose_t   GetPoseT() const { return Pose_t(current_time_, R_, p_); }
+  Pose_t GetPoseT() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return Pose_t(current_time_, R_, p_);
+  }
 
-  COV GetCov() const { return P_; }
+  COV GetCov() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return P_;
+  }
 
-  BASIC::SE3 GetSE3() const { return BASIC::SE3(R_, p_); }
+  BASIC::SE3 GetSE3() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return BASIC::SE3(R_, p_);
+  }
 
-  void SetObsTime(const double obs_time) { current_obs_time_ = obs_time; }
-  void SetLastObsTime(const double obs_time) { last_obs_time_ = obs_time; }
+  void SetObsTime(const double obs_time) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    current_obs_time_ = obs_time;
+  }
+  void SetLastObsTime(const double obs_time) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    last_obs_time_ = obs_time;
+  }
 
   void SetX(const SysState& x);
 
-  void SetCov(const COV& cov){ P_ = cov; }
+  void SetCov(const COV& cov) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    P_ = cov;
+  }
 
-  BASIC::V3 GetGravity() const { return g_; }
+  BASIC::V3 GetGravity() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return g_;
+  }
 
-  bool init_ = false;
+  void SetInitialized(bool initialized) {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    init_ = initialized;
+  }
+  bool IsInitialized() const {
+    std::lock_guard<std::recursive_mutex> lock(state_mutex_);
+    return init_;
+  }
   bool Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& state_robot);
 
 private:
   void BuildNoise(const Options& options);
   void Update();
+  bool StateIsPhysicallyPlausible() const;
+  void SaveTrustedState();
+  void RestoreTrustedState();
   
   bool  need_converge_  = true;
   float imu_scale_ = 1.0;
@@ -115,11 +163,30 @@ private:
 
   Options options_;
 
+  // Sensor callbacks perform high-rate forward prediction while the compute
+  // callback owns LiDAR propagation and correction.  A recursive mutex keeps
+  // the nominal and forward states coherent without forcing both callbacks
+  // into the same ROS executor lane.
+  mutable std::recursive_mutex state_mutex_;
+  bool init_ = false;
+
   double  forward_time_ = -1;
   IMUData forward_last_imu_;
   BASIC::SO3 fw_R_;
   BASIC::V3 fw_p_ = BASIC::V3::Zero();
   BASIC::V3 fw_v_ = BASIC::V3::Zero();
+
+  // Last LiDAR-corrected state. IMU or scan-matching numerical failures must
+  // never be allowed to turn a stationary robot into a kilometre-scale pose.
+  bool trusted_state_valid_ = false;
+  double trusted_state_time_ = -1.0;
+  BASIC::SO3 trusted_R_;
+  BASIC::V3 trusted_p_ = BASIC::V3::Zero();
+  BASIC::V3 trusted_v_ = BASIC::V3::Zero();
+  BASIC::V3 trusted_bg_ = BASIC::V3::Zero();
+  BASIC::V3 trusted_ba_ = BASIC::V3::Zero();
+  BASIC::V3 trusted_g_{0, 0, - (BASIC::scalar)g_gravity_norm};
+  COV trusted_P_ = COV::Identity();
 };
 
 
