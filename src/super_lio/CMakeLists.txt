@@ -22,11 +22,17 @@ find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
+find_package(tf2_ros REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
-find_package(Glog REQUIRED)
+# Ubuntu/Debian export CONFIG package "glog"; some setups provide FindGlog.cmake
+find_package(glog CONFIG QUIET)
+if(NOT glog_FOUND)
+  find_package(Glog REQUIRED)
+endif()
+find_package(TBB REQUIRED)
 find_package(basic REQUIRED)
 
 
@@ -63,6 +69,7 @@ ament_target_dependencies(lio PUBLIC
   visualization_msgs
   nav_msgs
   pcl_ros
+  tf2_ros
   livox_ros_driver2
   basic
   rosidl_default_runtime
@@ -72,6 +79,7 @@ target_link_libraries(lio PUBLIC
   Eigen3::Eigen
   ${PCL_LIBRARIES}
   glog
+  TBB::tbb
   pthread
   ${cpp_typesupport_target}
 )

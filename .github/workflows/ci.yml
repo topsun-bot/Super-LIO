@@ -1,0 +1,74 @@
+# Real compile CI for Super-LIO (ROS 2 / colcon).
+#
+# Covered:
+#   - colcon configure + build of this repo's packages (`basic`, `super_lio`)
+#     including generated CloudPose messages and both nodes
+#   - syntax-check of launch/*.py
+#
+# Out of scope (intentionally):
+#   - Humble/Iron matrix (README also lists those; Jazzy matches Ubuntu 24.04)
+#   - Livox-SDK2 and the livox_ros_driver2 *driver node* (heavy third-party stack)
+#   - Runtime / ros2 launch / dataset playback (no bags in-repo)
+#   - Unit tests (none exist in this tree)
+name: CI
+
+on:
+  push:
+    branches: [ros2]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  colcon-build:
+    name: colcon build (ROS 2 Jazzy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ros:jazzy-ros-base
+    env:
+      DEBIAN_FRONTEND: noninteractive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake git ca-certificates \
+            python3-colcon-common-extensions \
+            libgoogle-glog-dev libgflags-dev libtbb-dev \
+            libeigen3-dev libpcl-dev \
+            ros-jazzy-pcl-ros ros-jazzy-pcl-conversions \
+            ros-jazzy-tf2-ros ros-jazzy-visualization-msgs \
+            ros-jazzy-nav-msgs ros-jazzy-sensor-msgs \
+            ros-jazzy-geometry-msgs
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Fetch livox_ros_driver2 message interface
+        run: |
+          # Super-LIO compiles against CustomMsg only. Official livox_ros_driver2
+          # also builds Livox-SDK2 + the hardware driver (not needed to compile
+          # this repo) and generates messages under livox_interfaces2, which
+          # does not match Super-LIO's <livox_ros_driver2/msg/custom_msg.hpp>.
+          git clone --depth 1 https://github.com/Livox-SDK/livox_ros_driver2.git src/livox_ros_driver2
+          cp .github/ci/livox_ros_driver2/CMakeLists.txt src/livox_ros_driver2/CMakeLists.txt
+          cp .github/ci/livox_ros_driver2/package.xml src/livox_ros_driver2/package.xml
+
+      - name: Syntax-check launch files
+        run: python3 -m py_compile src/super_lio/launch/*.py
+
+      - name: colcon build
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build \
+            --event-handlers console_direct+ \
+            --cmake-args -DCMAKE_BUILD_TYPE=Release
