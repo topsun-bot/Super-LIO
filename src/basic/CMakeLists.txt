@@ -12,7 +12,11 @@ set(CMAKE_C_FLAGS_RELEASE "-O3 -Wall -fPIC")
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(Glog REQUIRED)
+# Ubuntu/Debian export CONFIG package "glog"; some setups provide FindGlog.cmake
+find_package(glog CONFIG QUIET)
+if(NOT glog_FOUND)
+  find_package(Glog REQUIRED)
+endif()
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
 
