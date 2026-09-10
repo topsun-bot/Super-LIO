@@ -3,7 +3,7 @@
   <name>livox_ros_driver2</name>
   <version>1.0.0</version>
   <description>Message-only overlay of livox_ros_driver2 for Super-LIO CI</description>
-  <maintainer email="ci@localhost">CI</maintainer>
+  <maintainer email="dev@livoxtech.com">feng</maintainer>
   <license>MIT</license>
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
